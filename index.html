@@ -1,1 +1,219 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Neon Runner 3D</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #111; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        #game-container { width: 100vw; height: 100vh; display: block; }
+        #ui-layer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; display: flex; flex-direction: column; justify-content: space-between;
+            padding: 20px; box-sizing: border-box; color: white;
+        }
+        .score-board {
+            font-size: 24px; font-weight: bold; text-shadow: 0 0 10px #0ff;
+            background: rgba(0,0,0,0.5); padding: 10px 20px; border-radius: 10px; align-self: flex-start;
+        }
+        #start-screen {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.8); display: flex; flex-direction: column;
+            justify-content: center; align-items: center; pointer-events: auto; z-index: 10;
+        }
+        h1 { color: #0ff; text-shadow: 0 0 20px #0ff; font-size: 3em; margin-bottom: 10px; text-align: center; }
+        p { color: #aaa; font-size: 1.2em; margin-bottom: 30px; text-align: center; }
+        button {
+            padding: 15px 40px; font-size: 20px; font-weight: bold; color: #111;
+            background: #0ff; border: none; border-radius: 30px; cursor: pointer;
+            box-shadow: 0 0 20px #0ff; transition: 0.2s; pointer-events: auto;
+        }
+        button:hover { background: #fff; box-shadow: 0 0 40px #fff; transform: scale(1.05); }
+        .controls { color: #fff; opacity: 0.5; text-align: center; font-size: 14px; }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+    <div id="game-container"></div>
+    
+    <div id="ui-layer">
+        <div class="score-board" id="scoreDisplay">Skor: 0</div>
+        <div class="controls">Geser Kiri/Kanan atau gunakan Panah (← →) untuk menghindar</div>
+    </div>
 
+    <div id="start-screen">
+        <h1>NEON RUNNER 3D</h1>
+        <p>Hindari blok merah dan kumpulkan skor!</p>
+        <button id="startBtn">MULAI GAME</button>
+    </div>
+
+    <script>
+        // --- INISIALISASI 3D ENGINE ---
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x111111, 0.015);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.getElementById('game-container').appendChild(renderer.domElement);
+
+        // --- PENCAHAYAAN ---
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+        scene.add(ambientLight);
+        
+        const dirLight = new THREE.DirectionalLight(0x00ffff, 1);
+        dirLight.position.set(0, 20, 10);
+        scene.add(dirLight);
+
+        // --- OBJEK PEMAIN ---
+        const playerGeo = new THREE.BoxGeometry(1, 1, 2);
+        const playerMat = new THREE.MeshPhongMaterial({ color: 0x00ffff, emissive: 0x004444 });
+        const player = new THREE.Mesh(playerGeo, playerMat);
+        player.position.y = 0.5;
+        player.position.z = 5;
+        scene.add(player);
+
+        const edges = new THREE.EdgesGeometry(playerGeo);
+        const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0xffffff }));
+        player.add(line);
+
+        // --- JALANAN 3D ---
+        const roadGeo = new THREE.PlaneGeometry(10, 200);
+        const roadMat = new THREE.MeshPhongMaterial({ color: 0x222222, depthWrite: false });
+        const road = new THREE.Mesh(roadGeo, roadMat);
+        road.rotation.x = -Math.PI / 2;
+        road.position.z = -50;
+        scene.add(road);
+
+        const gridHelper = new THREE.GridHelper(10, 40, 0x00ffff, 0x003333);
+        gridHelper.position.set(0, 0.01, -50);
+        scene.add(gridHelper);
+
+        // --- VARIABEL GAME ---
+        let isPlaying = false;
+        let score = 0;
+        let obstacles = [];
+        let gameSpeed = 0.8;
+        
+        const lanes = [-3, 0, 3];
+        let currentLane = 1; 
+
+        // --- FUNGSI RINTANGAN ---
+        function spawnObstacle() {
+            const obsGeo = new THREE.BoxGeometry(2, 2, 2);
+            const obsMat = new THREE.MeshPhongMaterial({ color: 0xff0055, emissive: 0x440011 });
+            const obstacle = new THREE.Mesh(obsGeo, obsMat);
+            
+            const laneIndex = Math.floor(Math.random() * 3);
+            obstacle.position.x = lanes[laneIndex];
+            obstacle.position.y = 1;
+            obstacle.position.z = -100;
+            
+            scene.add(obstacle);
+            obstacles.push(obstacle);
+        }
+
+        // --- KONTROL ---
+        document.addEventListener('keydown', (e) => {
+            if (!isPlaying) return;
+            if (e.key === 'ArrowLeft' || e.key === 'a') {
+                if (currentLane > 0) currentLane--;
+            } else if (e.key === 'ArrowRight' || e.key === 'd') {
+                if (currentLane < 2) currentLane++;
+            }
+        });
+
+        let touchStartX = 0;
+        document.addEventListener('touchstart', (e) => {
+            touchStartX = e.touches[0].clientX;
+        });
+        document.addEventListener('touchend', (e) => {
+            if (!isPlaying) return;
+            let touchEndX = e.changedTouches[0].clientX;
+            if (touchEndX < touchStartX - 30) {
+                if (currentLane > 0) currentLane--;
+            } else if (touchEndX > touchStartX + 30) {
+                if (currentLane < 2) currentLane++;
+            }
+        });
+
+        // --- LOGIKA GAME ---
+        let spawnTimer = 0;
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (isPlaying) {
+                player.position.x += (lanes[currentLane] - player.position.x) * 0.15;
+                player.rotation.x -= 0.05;
+                player.rotation.y = (lanes[currentLane] - player.position.x) * 0.2;
+
+                spawnTimer++;
+                if (spawnTimer > 60) {
+                    spawnObstacle();
+                    spawnTimer = 0;
+                }
+
+                for (let i = obstacles.length - 1; i >= 0; i--) {
+                    let obs = obstacles[i];
+                    obs.position.z += gameSpeed;
+                    
+                    if (Math.abs(obs.position.z - player.position.z) < 1.5 && Math.abs(obs.position.x - player.position.x) < 1.5) {
+                        gameOver();
+                    }
+
+                    if (obs.position.z > 10) {
+                        scene.remove(obs);
+                        obstacles.splice(i, 1);
+                        score += 10;
+                        document.getElementById('scoreDisplay').innerText = "Skor: " + score;
+                        gameSpeed += 0.001;
+                    }
+                }
+
+                gridHelper.position.z += gameSpeed;
+                if (gridHelper.position.z > 0) {
+                    gridHelper.position.z = -100;
+                }
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // --- START & OVER ---
+        document.getElementById('startBtn').addEventListener('click', () => {
+            document.getElementById('start-screen').style.display = 'none';
+            isPlaying = true;
+        });
+
+        function gameOver() {
+            isPlaying = false;
+            document.getElementById('start-screen').style.display = 'flex';
+            document.querySelector('h1').innerText = "GAME OVER";
+            document.querySelector('h1').style.color = "#ff0055";
+            document.querySelector('h1').style.textShadow = "0 0 20px #ff0055";
+            document.querySelector('p').innerText = "Skor Akhir: " + score;
+            document.getElementById('startBtn').innerText = "MAIN LAGI";
+            
+            score = 0;
+            currentLane = 1;
+            gameSpeed = 0.8;
+            player.position.x = 0;
+            document.getElementById('scoreDisplay').innerText = "Skor: 0";
+            
+            for (let obs of obstacles) {
+                scene.remove(obs);
+            }
+            obstacles = [];
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        animate();
+    </script>
+</body>
+</html>
